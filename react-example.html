@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Component</title>
+    <script>
+        function createTextVNode(value) {
+            return { type: 'TEXT', value, dom: null };
+        }
+
+        // Our simplified JavaScript library code goes here
+        function createElement(type, props = {}, ...children) {
+            const processedChildren = children.map(child =>
+                typeof child === 'string'
+                    ? createTextVNode(child)
+                    : child
+            );
+
+            if (typeof type === 'function') {
+                const componentInstance = new type(props);
+                const renderedVNode = componentInstance.render();
+                renderedVNode.componentInstance = componentInstance;
+                componentInstance.vNode = renderedVNode;
+                return renderedVNode;
+            }
+            return { type, props, children: processedChildren || [] };
+        }
+
+        function render(vNode, container) {
+            let dom;
+
+            // Check if vNode is a text node object
+            if (vNode.type === 'TEXT') {
+                dom = document.createTextNode(vNode.value);
+            }
+            // Check if vNode is an element node object
+            else if (typeof vNode === 'object') {
+                dom = document.createElement(vNode.type);
+
+                if (vNode.props) {
+                    updateProps(dom, {}, vNode.props);
+                }
+
+                vNode.children.forEach(child => render(child, dom));
+            }
+            // Check if vNode is a string
+            else if (typeof vNode === 'string') {
+                dom = document.createTextNode(vNode);
+            }
+
+            // Update vNode.dom with the created DOM node
+            vNode.dom = dom;
+
+            return container.appendChild(dom);
+        }
+
+        class Component {
+            constructor(props) {
+                this.props = props;
+                this.state = {};
+            }
+
+            setState(newState) {
+                this.state = { ...this.state, ...newState };
+                updateComponent(this);
+            }
+        }
+
+        function updateComponent(instance) {
+            const oldVNode = instance.vNode;
+            const newVNode = instance.render();
+            const parent = oldVNode.dom ? oldVNode.dom.parentNode : null;
+            instance.vNode = reconcile(oldVNode, newVNode, parent);
+            instance.vNode.dom = newVNode.dom;  
+        }
+
+        function reconcile(oldVNode, newVNode, container) {
+            // Case 1: If oldVNode is null, create the new node
+            if (!oldVNode) {
+                console.log('case 1', oldVNode, newVNode, container)
+                newVNode.dom = render(newVNode, container);
+                return newVNode.dom;
+            }
+            // Case 2: If newVNode is null, remove the old node
+            else if (!newVNode) {
+                console.log('case 2', oldVNode, newVNode, container)
+                container.removeChild(oldVNode.dom);
+                oldVNode.dom = null;
+            }
+            // Case 3: If node type has changed, replace node
+            else if (changed(oldVNode, newVNode)) {
+                console.log('case 3', oldVNode, newVNode, container)
+
+                if (newVNode.type === 'TEXT') {
+                    // Handle text nodes
+                    if (oldVNode.dom) {
+                        oldVNode.dom.textContent = newVNode.value;
+                        newVNode.dom = oldVNode.dom;  // Maintain the same dom reference
+                    } else {
+                        newVNode.dom = render(newVNode, container);
+                    }
+                } else {
+                    // Handle element nodes
+                    newVNode.dom = render(newVNode, container);
+                    if (oldVNode.dom && oldVNode.dom.parentNode) {
+                        oldVNode.dom.parentNode.replaceChild(newVNode.dom, oldVNode.dom);
+                    }
+                }
+                return newVNode.dom;
+            }
+            // Case 4: If the newVNode is a component, handle component
+            else if (typeof newVNode.type === 'function') {
+                console.log('case 4', oldVNode, newVNode, container)
+
+                if (oldVNode && oldVNode.componentInstance) {
+                    oldVNode.componentInstance.props = newVNode.props;
+                    newVNode = oldVNode.componentInstance.render();
+                    newVNode.componentInstance = oldVNode.componentInstance;
+                    newVNode.dom = oldVNode.dom;
+                } else {
+                    const instance = new newVNode.type(newVNode.props);
+                    newVNode = instance.render();
+                    newVNode.dom = render(newVNode, container);
+                    newVNode.componentInstance = instance;
+                }
+                return reconcile(oldVNode, newVNode, container);
+            }
+            // Case 5: If node type is the same, update props and children
+            else if (newVNode.type) {
+                console.log('case 5', oldVNode, newVNode, container)
+
+                updateProps(oldVNode.dom, oldVNode.props, newVNode.props);
+                newVNode.dom = oldVNode.dom;
+
+                if (newVNode.type !== 'TEXT' && oldVNode.type !== 'TEXT') {
+                    const childLength = Math.max(oldVNode.children.length, newVNode.children.length);
+                    for (let i = 0; i < childLength; i++) {
+                        reconcile(oldVNode.children[i] || null, newVNode.children[i] || null, oldVNode.dom);
+                    }
+                }
+            } else if (!oldVNode && !newVNode) {
+                // Nothing to reconcile
+                return null;
+            }
+
+            return newVNode.dom;
+        }
+
+    function changed(node1, node2) {
+        if (typeof node1 !== typeof node2) {
+            return true;
+        }
+        if (typeof node1 === 'string' && node1 !== node2) {
+            return true;
+        }
+        if (node1.type !== node2.type) {
+            return true;
+        }
+        // Additional check for TEXT node values
+        if (node1.type === 'TEXT' && node1.value !== node2.value) {
+            return true;
+        }
+        return false;
+    }
+
+    function updateProps(dom, oldProps, newProps) {
+        oldProps = oldProps || {};
+        newProps = newProps || {};
+            
+        // Remove old listeners
+        Object.keys(oldProps)
+            .filter(isEvent)
+            .forEach(name => {
+                const eventType = name.toLowerCase().substring(2);
+                dom.removeEventListener(eventType, oldProps[name]);
+            });
+
+        // Add new listeners
+        Object.keys(newProps)
+            .filter(isEvent)
+            .forEach(name => {
+                const eventType = name.toLowerCase().substring(2);
+                dom.addEventListener(eventType, newProps[name]);
+            });
+        }
+
+        function isEvent(prop) {
+            return prop.startsWith("on");
+        }
+
+        // Your component code goes here
+        class Counter extends Component {
+            constructor(props) {
+                super(props);
+                this.state = { count: 0, secondCount: 0 };
+            }
+
+            render() {
+                return createElement('div', {}, 
+                            createElement('div', {},
+                                'Count: ',
+                                String(this.state.count),
+                                createElement('button', { onClick: () => {  this.setState({ count: this.state.count + 1 }) } }, '+'),
+                            ),
+                            createElement('div', {},
+                                    'Count: ',
+                                    String(this.state.secondCount),
+                                    createElement('button', { onClick: () => { this.setState({ secondCount: this.state.secondCount + 1 }) } }, '+'),
+                            )
+                );
+            }
+        }
+
+    </script>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script>
+        // Render your component here
+        const vNode = createElement(Counter);
+        console.log(vNode)
+        render(vNode, document.getElementById('root'));
+    </script>
+</body>
+
+</html>
